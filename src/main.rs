@@ -1,7 +1,6 @@
-
-use std::io;
 use nostr_types::{PublicKey, RelayInformationDocument, RelayUrl, Unixtime};
 use serde::{Deserialize, Serialize};
+use std::io;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Relay {
@@ -27,7 +26,6 @@ pub struct Scoring {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-
     let mut ranked: Vec<(Relay, Scoring, PublicKey)> = Vec::new();
 
     let lines = io::stdin().lines();
@@ -36,7 +34,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let relay: Relay = serde_json::from_str(&line)?;
 
         // Skip if we never successfully connected to it
-        if relay.success_count==0 {
+        if relay.success_count == 0 {
             continue;
         }
 
@@ -51,6 +49,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             None => continue,
         };
 
+        // Skip the .nostr1.com relays
+        if relay.url.as_str().contains(".nostr1.com") {
+            continue;
+        }
+
         // Skip if the pubkey is invalid (or a prefix)
         let pubkey = match nip11.pubkey {
             Some(pkp) => match PublicKey::try_from_hex_string(pkp.as_str(), true) {
@@ -59,6 +62,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
             None => continue,
         };
+
+        if let Some(limitation) = nip11.limitation {
+            if let Some(true) = limitation.restricted_writes {
+                continue;
+            }
+        }
 
         // Skip if they have a payments url or fees
         if nip11.payments_url.is_some() || nip11.fees.is_some() {
@@ -76,20 +85,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ranked.push((relay, scoring, pubkey));
     }
 
-    ranked.sort_by(|a,b| b.1.score.partial_cmp(&a.1.score).unwrap());
+    ranked.sort_by(|a, b| b.1.score.partial_cmp(&a.1.score).unwrap());
 
-    for (relay, scoring, _pubkey) in ranked.iter().take(20) {
-        println!("{} {:?}", relay.url, scoring);
+    for (relay, scoring, pubkey) in ranked.iter() {
+        println!("{} {:?} {}", relay.url, scoring, pubkey.as_bech32_string());
     }
 
     Ok(())
 }
 
 pub fn rank(relay: &Relay) -> Scoring {
-    let last_connected_at = match relay.last_connected_at {
-        None => 0,
-        Some(time) => time,
-    };
+    let last_connected_at = relay.last_connected_at.unwrap_or(0);
 
     let ago = Unixtime::now().unwrap().0 - last_connected_at as i64;
 
